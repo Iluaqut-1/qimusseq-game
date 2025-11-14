@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+    <title>Dogsled Run</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #1a1a2e;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: 'Arial', sans-serif;
+            overflow: hidden;
+            touch-action: none;
+        }
+        #gameCanvas {
+            display: block;
+            background: #87ceeb;
+            max-width: 100%;
+            max-height: 100vh;
+            image-rendering: crisp-edges;
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // ===== CONFIGURATION =====
+        const GAME_WIDTH = 800;
+        const GAME_HEIGHT = 450;
+        const LANE_COUNT = 3;
+        const LANE_HEIGHT = GAME_HEIGHT / LANE_COUNT;
+
+        // ===== GLOBAL STATE =====
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        let scale = 1;
+        let offsetX = 0;
+        let offsetY = 0;
+
+        let gameState = {
+            score: 0,
+            bestScore: parseInt(localStorage.getItem('dogsledBestScore') || '0'),
+            gameSpeed: 200,
+            baseSpeed: 200,
+            hasStarted: false,
+            isGameOver: false,
+            isInvincible: false,
+            invincibleTimer: 0,
+            lastInvincibleMilestone: 0,
+            spawnTimer: 0,
+            spawnInterval: 2,
+            animTime: 0
+        };
+
+        let player = {
+            lane: 1,
+            x: 150,
+            width: 120,
+            height: 60,
+            targetLane: 1,
+            laneTransitionSpeed: 8
+        };
+
+        let obstacles = [];
+        let collectibles = [];
+        let lastTime = 0;
+
+        // ===== CANVAS SETUP WITH RESPONSIVE SCALING =====
+        function resizeCanvas() {
+            const dpr = window.devicePixelRatio || 1;
+            const aspectRatio = GAME_WIDTH / GAME_HEIGHT;
+
+            let canvasWidth = window.innerWidth;
+            let canvasHeight = window.innerHeight;
+
+            // Maintain aspect ratio
+            if (canvasWidth / canvasHeight > aspectRatio) {
+                canvasWidth = canvasHeight * aspectRatio;
+            } else {
+                canvasHeight = canvasWidth / aspectRatio;
+            }
+
+            canvas.style.width = canvasWidth + 'px';
+            canvas.style.height = canvasHeight + 'px';
+
+            canvas.width = GAME_WIDTH * dpr;
+            canvas.height = GAME_HEIGHT * dpr;
+
+            ctx.scale(dpr, dpr);
+            scale = canvasWidth / GAME_WIDTH;
+
+            offsetX = (window.innerWidth - canvasWidth) / 2;
+            offsetY = (window.innerHeight - canvasHeight) / 2;
+        }
+
+        // ===== INPUT HANDLERS =====
+        window.addEventListener('resize', resizeCanvas);
+
+        // Keyboard controls for desktop
+        document.addEventListener('keydown', (e) => {
+            if (gameState.isGameOver) {
+                if (e.code === 'Space') {
+                    resetGame();
+                }
+                return;
+            }
+
+            if (!gameState.hasStarted) {
+                gameState.hasStarted = true;
+            }
+
+            if (e.code === 'ArrowUp' || e.code === 'KeyW') {
+                player.targetLane = Math.max(0, player.targetLane - 1);
+            } else if (e.code === 'ArrowDown' || e.code === 'KeyS') {
+                player.targetLane = Math.min(LANE_COUNT - 1, player.targetLane + 1);
+            }
+        });
+
+        // Touch controls for mobile - prevent scroll/zoom
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+
+            if (gameState.isGameOver) {
+                resetGame();
+                return;
+            }
+
+            if (!gameState.hasStarted) {
+                gameState.hasStarted = true;
+                return;
+            }
+
+            const touch = e.touches[0];
+            const rect = canvas.getBoundingClientRect();
+            const y = (touch.clientY - rect.top) / scale;
+
+            // Tap upper half = move up, lower half = move down
+            if (y < GAME_HEIGHT / 2) {
+                player.targetLane = Math.max(0, player.targetLane - 1);
+            } else {
+                player.targetLane = Math.min(LANE_COUNT - 1, player.targetLane + 1);
+            }
+        }, { passive: false });
+
+        // Click controls for desktop
+        canvas.addEventListener('click', (e) => {
+            if (gameState.isGameOver) {
+                resetGame();
+                return;
+            }
+
+            if (!gameState.hasStarted) {
+                gameState.hasStarted = true;
+                return;
+            }
+
+            const rect = canvas.getBoundingClientRect();
+            const y = (e.clientY - rect.top) / scale;
+
+            if (y < GAME_HEIGHT / 2) {
+                player.targetLane = Math.max(0, player.targetLane - 1);
+            } else {
+                player.targetLane = Math.min(LANE_COUNT - 1, player.targetLane + 1);
+            }
+        });
+
+        // ===== GAME LOGIC =====
+        function resetGame() {
+            gameState.score = 0;
+            gameState.gameSpeed = gameState.baseSpeed;
+            gameState.isGameOver = false;
+            gameState.hasStarted = false;
+            gameState.isInvincible = false;
+            gameState.invincibleTimer = 0;
+            gameState.lastInvincibleMilestone = 0;
+            gameState.spawnTimer = 0;
+            gameState.animTime = 0;
+
+            player.lane = 1;
+            player.targetLane = 1;
+
+            obstacles = [];
+            collectibles = [];
+        }
+
+        function spawnObject() {
+            const lane = Math.floor(Math.random() * LANE_COUNT);
+            const type = Math.random();
+
+            if (type < 0.15) {
+                // Arctic fox (rare, +2 points)
+                collectibles.push({
+                    type: 'fox',
+                    lane: lane,
+                    x: GAME_WIDTH,
+                    width: 40,
+                    height: 30
+                });
+            } else if (type < 0.35) {
+                // Seal (+1 point)
+                collectibles.push({
+                    type: 'seal',
+                    lane: lane,
+                    x: GAME_WIDTH,
+                    width: 45,
+                    height: 35
+                });
+            } else if (type < 0.55) {
+                // Polar bear (obstacle)
+                obstacles.push({
+                    type: 'bear',
+                    lane: lane,
+                    x: GAME_WIDTH,
+                    width: 70,
+                    height: 60
+                });
+            } else if (type < 0.75) {
+                // Iceberg (obstacle)
+                obstacles.push({
+                    type: 'iceberg',
+                    lane: lane,
+                    x: GAME_WIDTH,
+                    width: 60,
+                    height: 80
+                });
+            } else {
+                // Sea-ice opening (obstacle)
+                obstacles.push({
+                    type: 'opening',
+                    lane: lane,
+                    x: GAME_WIDTH,
+                    width: 80,
+                    height: LANE_HEIGHT
+                });
+            }
+        }
+
+        function checkCollision(obj1, obj2) {
+            return obj1.lane === obj2.lane &&
+                   player.x < obj2.x + obj2.width &&
+                   player.x + player.width > obj2.x;
+        }
+
+        function update(dt) {
+            if (!gameState.hasStarted || gameState.isGameOver) return;
+
+            gameState.animTime += dt;
+
+            // Smooth lane transition
+            if (player.lane !== player.targetLane) {
+                const direction = player.targetLane > player.lane ? 1 : -1;
+                player.lane += direction * player.laneTransitionSpeed * dt;
+
+                if (direction > 0 && player.lane >= player.targetLane) {
+                    player.lane = player.targetLane;
+                } else if (direction < 0 && player.lane <= player.targetLane) {
+                    player.lane = player.targetLane;
+                }
+            }
+
+            // Update invincibility timer
+            if (gameState.isInvincible) {
+                gameState.invincibleTimer -= dt;
+                if (gameState.invincibleTimer <= 0) {
+                    gameState.isInvincible = false;
+                    gameState.invincibleTimer = 0;
+                }
+            }
+
+            // Check for invincibility milestone (every 10 points)
+            const currentMilestone = Math.floor(gameState.score / 10) * 10;
+            if (currentMilestone > gameState.lastInvincibleMilestone && currentMilestone > 0) {
+                gameState.isInvincible = true;
+                gameState.invincibleTimer = 10;
+                gameState.lastInvincibleMilestone = currentMilestone;
+            }
+
+            // Increase difficulty over time
+            gameState.gameSpeed = gameState.baseSpeed + gameState.score * 2;
+
+            // Spawn objects
+            gameState.spawnTimer -= dt;
+            if (gameState.spawnTimer <= 0) {
+                spawnObject();
+                gameState.spawnTimer = gameState.spawnInterval - (gameState.score * 0.01);
+                gameState.spawnTimer = Math.max(0.8, gameState.spawnTimer);
+            }
+
+            // Move and check obstacles
+            for (let i = obstacles.length - 1; i >= 0; i--) {
+                obstacles[i].x -= gameState.gameSpeed * dt;
+
+                if (obstacles[i].x + obstacles[i].width < 0) {
+                    obstacles.splice(i, 1);
+                    continue;
+                }
+
+                if (checkCollision(player, obstacles[i]) && !gameState.isInvincible) {
+                    gameState.isGameOver = true;
+                    if (gameState.score > gameState.bestScore) {
+                        gameState.bestScore = gameState.score;
+                        localStorage.setItem('dogsledBestScore', gameState.bestScore);
+                    }
+                }
+            }
+
+            // Move and check collectibles
+            for (let i = collectibles.length - 1; i >= 0; i--) {
+                collectibles[i].x -= gameState.gameSpeed * dt;
+
+                if (collectibles[i].x + collectibles[i].width < 0) {
+                    collectibles.splice(i, 1);
+                    continue;
+                }
+
+                if (checkCollision(player, collectibles[i])) {
+                    if (collectibles[i].type === 'seal') {
+                        gameState.score += 1;
+                    } else if (collectibles[i].type === 'fox') {
+                        gameState.score += 2;
+                    }
+                    collectibles.splice(i, 1);
+                }
+            }
+        }
+
+        // ===== DRAWING FUNCTIONS =====
+        function drawBackground() {
+            // Sky gradient
+            const gradient = ctx.createLinearGradient(0, 0, 0, GAME_HEIGHT);
+            gradient.addColorStop(0, '#2c5f8d');
+            gradient.addColorStop(0.6, '#87ceeb');
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+
+            // Ground (sea ice)
+            ctx.fillStyle = '#e0f2f7';
+            ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+
+            // Ice texture lines (animated)
+            ctx.strokeStyle = '#c8e6f0';
+            ctx.lineWidth = 2;
+            const offset = (gameState.animTime * 100) % 100;
+            for (let x = -100 + offset; x < GAME_WIDTH; x += 100) {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x + 50, GAME_HEIGHT);
+                ctx.stroke();
+            }
+
+            // Lane dividers
+            ctx.strokeStyle = 'rgba(150, 200, 220, 0.3)';
+            ctx.lineWidth = 1;
+            for (let i = 1; i < LANE_COUNT; i++) {
+                ctx.beginPath();
+                ctx.moveTo(0, i * LANE_HEIGHT);
+                ctx.lineTo(GAME_WIDTH, i * LANE_HEIGHT);
+                ctx.stroke();
+            }
+        }
+
+        // Draw single dog with animation
+        function drawDog(x, y, size = 1, bobOffset = 0) {
+            ctx.save();
+            ctx.translate(x, y + bobOffset);
+
+            // Body
+            ctx.fillStyle = '#555';
+            ctx.beginPath();
+            ctx.ellipse(0, 0, 20 * size, 12 * size, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Head
+            ctx.fillStyle = '#666';
+            ctx.beginPath();
+            ctx.arc(18 * size, -2 * size, 10 * size, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Ears
+            ctx.fillStyle = '#555';
+            ctx.beginPath();
+            ctx.moveTo(14 * size, -10 * size);
+            ctx.lineTo(12 * size, -16 * size);
+            ctx.lineTo(18 * size, -12 * size);
+            ctx.fill();
+
+            ctx.beginPath();
+            ctx.moveTo(22 * size, -10 * size);
+            ctx.lineTo(24 * size, -16 * size);
+            ctx.lineTo(18 * size, -12 * size);
+            ctx.fill();
+
+            // Nose
+            ctx.fillStyle = '#222';
+            ctx.beginPath();
+            ctx.arc(25 * size, -2 * size, 3 * size, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.restore();
+        }
+
+        // Draw complete dogsled team with animations
+        function drawDogsled() {
+            const centerY = player.lane * LANE_HEIGHT + LANE_HEIGHT / 2;
+            const bobAmount = Math.sin(gameState.animTime * 8) * 3; // Running bobbing animation
+            const ropeBob = Math.sin(gameState.animTime * 6) * 2;   // Rope wobble
+
+            // Draw invincibility aura
+            if (gameState.isInvincible) {
+                ctx.strokeStyle = '#ffeb3b';
+                ctx.lineWidth = 4;
+                ctx.shadowBlur = 20;
+                ctx.shadowColor = '#ffeb3b';
+                ctx.strokeRect(player.x - 10, centerY - player.height/2 - 10,
+                              player.width + 20, player.height + 20);
+                ctx.shadowBlur = 0;
+            }
+
+            // Dogs positions
+            const dogs = [
+                { x: player.x + 90, y: centerY, size: 1 },      // Lead dog
+                { x: player.x + 60, y: centerY, size: 0.9 },    // Dog 2
+                { x: player.x + 35, y: centerY, size: 0.85 },   // Dog 3
+            ];
+
+            // Draw ropes connecting dogs and sled
+            ctx.strokeStyle = '#8b4513';
+            ctx.lineWidth = 2;
+            for (let i = 0; i < dogs.length; i++) {
+                ctx.beginPath();
+                if (i === dogs.length - 1) {
+                    ctx.moveTo(dogs[i].x - 15, dogs[i].y + ropeBob);
+                    ctx.lineTo(player.x + 15, centerY);
+                } else {
+                    ctx.moveTo(dogs[i].x - 15, dogs[i].y + ropeBob);
+                    ctx.lineTo(dogs[i + 1].x + 15, dogs[i + 1].y + ropeBob);
+                }
+                ctx.stroke();
+            }
+
+            // Draw dogs
+            dogs.forEach(dog => {
+                drawDog(dog.x, dog.y, dog.size, bobAmount);
+            });
+
+            // Sled with rocking animation
+            ctx.fillStyle = '#654321';
+            const sledBob = Math.sin(gameState.animTime * 7) * 2;
+            ctx.fillRect(player.x - 10, centerY - 8 + sledBob, 50, 16);
+
+            // Sled runners
+            ctx.strokeStyle = '#333';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.moveTo(player.x - 10, centerY + 8 + sledBob);
+            ctx.lineTo(player.x + 40, centerY + 8 + sledBob);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(player.x - 10, centerY - 8 + sledBob);
+            ctx.lineTo(player.x + 40, centerY - 8 + sledBob);
+            ctx.stroke();
+
+            // Musher (respectful stylized representation)
+            // Body (parka/coat)
+            ctx.fillStyle = '#004d66';
+            ctx.fillRect(player.x + 5, centerY - 28 + sledBob, 20, 20);
+
+            // Head
+            ctx.fillStyle = '#d4a574';
+            ctx.beginPath();
+            ctx.arc(player.x + 15, centerY - 32 + sledBob, 8, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Hood
+            ctx.fillStyle = '#003d52';
+            ctx.beginPath();
+            ctx.arc(player.x + 15, centerY - 32 + sledBob, 10, Math.PI, 0);
+            ctx.fill();
+        }
+
+        // Draw polar bear with bobbing animation
+        function drawPolarBear(x, y) {
+            const bob = Math.sin(gameState.animTime * 3 + x) * 4;
+            const headNod = Math.sin(gameState.animTime * 4) * 2;
+
+            ctx.fillStyle = '#f0f0f0';
+            // Body
+            ctx.beginPath();
+            ctx.ellipse(x, y + bob, 35, 25, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Head with nodding animation
+            ctx.beginPath();
+            ctx.ellipse(x + 30, y - 5 + bob + headNod, 20, 18, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Ears
+            ctx.beginPath();
+            ctx.arc(x + 22, y - 20 + bob + headNod, 6, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(x + 38, y - 20 + bob + headNod, 6, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Nose
+            ctx.fillStyle = '#222';
+            ctx.beginPath();
+            ctx.arc(x + 42, y - 3 + bob + headNod, 4, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        // Draw seal with bobbing and tail wiggle
+        function drawSeal(x, y) {
+            const bob = Math.sin(gameState.animTime * 4 + x) * 3;
+            const tailWiggle = Math.sin(gameState.animTime * 6 + x) * 5;
+
+            ctx.fillStyle = '#696969';
+            // Body
+            ctx.beginPath();
+            ctx.ellipse(x, y + bob, 22, 15, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Head
+            ctx.beginPath();
+            ctx.ellipse(x + 18, y + bob, 12, 11, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Tail with wiggle
+            ctx.beginPath();
+            ctx.ellipse(x - 18 + tailWiggle, y + bob, 8, 6, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Eyes
+            ctx.fillStyle = '#000';
+            ctx.beginPath();
+            ctx.arc(x + 22, y - 3 + bob, 2, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        // Draw arctic fox with tail wag and hopping
+        function drawFox(x, y) {
+            const tailWag = Math.sin(gameState.animTime * 8 + x) * 8;
+            const hop = Math.abs(Math.sin(gameState.animTime * 5 + x)) * 6;
+
+            ctx.fillStyle = '#fff';
+            // Body
+            ctx.fillRect(x - 10, y - 8 - hop, 20, 12);
+
+            // Head (triangular snout)
+            ctx.beginPath();
+            ctx.moveTo(x + 10, y - 8 - hop);
+            ctx.lineTo(x + 20, y - 2 - hop);
+            ctx.lineTo(x + 10, y + 4 - hop);
+            ctx.fill();
+
+            // Ears
+            ctx.beginPath();
+            ctx.moveTo(x + 12, y - 8 - hop);
+            ctx.lineTo(x + 14, y - 14 - hop);
+            ctx.lineTo(x + 16, y - 8 - hop);
+            ctx.fill();
+
+            // Tail with wag animation
+            ctx.beginPath();
+            ctx.ellipse(x - 18 + tailWag, y - 2 - hop, 10, 6, -0.3, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Nose
+            ctx.fillStyle = '#222';
+            ctx.beginPath();
+            ctx.arc(x + 20, y - 2 - hop, 2, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        // Draw iceberg with subtle drift
+        function drawIceberg(x, y) {
+            const drift = Math.sin(gameState.animTime * 2 + x * 0.1) * 2;
+
+            ctx.fillStyle = '#e6f9ff';
+            ctx.strokeStyle = '#b3e5fc';
+            ctx.lineWidth = 2;
+
+            ctx.beginPath();
+            ctx.moveTo(x + drift, y + 20);
+            ctx.lineTo(x + 15 + drift, y - 30);
+            ctx.lineTo(x + 25 + drift, y - 40);
+            ctx.lineTo(x + 35 + drift, y - 35);
+            ctx.lineTo(x + 45 + drift, y - 20);
+            ctx.lineTo(x + 60 + drift, y + 20);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+        }
+
+        // Draw sea-ice opening with wave effect
+        function drawOpening(x, y, width) {
+            const wave = Math.sin(gameState.animTime * 4 + x * 0.1) * 3;
+
+            // Dark water
+            ctx.fillStyle = '#1e3a5f';
+            ctx.fillRect(x, y - LANE_HEIGHT / 2, width, LANE_HEIGHT);
+
+            // Wave lines
+            ctx.strokeStyle = '#2c5f8d';
+            ctx.lineWidth = 2;
+            for (let i = 0; i < 3; i++) {
+                ctx.beginPath();
+                ctx.moveTo(x, y - 10 + i * 10 + wave);
+                ctx.lineTo(x + width, y - 10 + i * 10 + wave);
+                ctx.stroke();
+            }
+
+            // Ice edges
+            ctx.fillStyle = '#b3d9e6';
+            ctx.fillRect(x, y - LANE_HEIGHT / 2, 5, LANE_HEIGHT);
+            ctx.fillRect(x + width - 5, y - LANE_HEIGHT / 2, 5, LANE_HEIGHT);
+        }
+
+        function drawHUD() {
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 24px Arial';
+            ctx.fillText(`Score: ${gameState.score}`, 20, 35);
+            ctx.fillText(`Best: ${gameState.bestScore}`, 20, 65);
+
+            if (gameState.isInvincible) {
+                ctx.fillStyle = '#ffeb3b';
+                ctx.font = 'bold 28px Arial';
+                ctx.fillText(`INVINCIBLE: ${gameState.invincibleTimer.toFixed(1)}s`,
+                            GAME_WIDTH / 2 - 100, 40);
+            }
+        }
+
+        function drawStartScreen() {
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+            ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 48px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('Dogsled Run', GAME_WIDTH / 2, GAME_HEIGHT / 2 - 40);
+
+            ctx.font = '24px Arial';
+            ctx.fillText('Tap or Press Any Key to Start', GAME_WIDTH / 2, GAME_HEIGHT / 2 + 20);
+
+            ctx.font = '18px Arial';
+            ctx.fillText('Avoid obstacles • Collect animals', GAME_WIDTH / 2, GAME_HEIGHT / 2 + 60);
+            ctx.fillText('Invincibility every 10 points', GAME_WIDTH / 2, GAME_HEIGHT / 2 + 90);
+
+            ctx.textAlign = 'left';
+        }
+
+        function drawGameOver() {
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 56px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('GAME OVER', GAME_WIDTH / 2, GAME_HEIGHT / 2 - 60);
+
+            ctx.font = '32px Arial';
+            ctx.fillText(`Score: ${gameState.score}`, GAME_WIDTH / 2, GAME_HEIGHT / 2);
+            ctx.fillText(`Best: ${gameState.bestScore}`, GAME_WIDTH / 2, GAME_HEIGHT / 2 + 40);
+
+            ctx.font = '24px Arial';
+            ctx.fillText('Tap or Press Space to Restart', GAME_WIDTH / 2, GAME_HEIGHT / 2 + 100);
+
+            ctx.textAlign = 'left';
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+
+            drawBackground();
+
+            // Draw obstacles
+            obstacles.forEach(obs => {
+                const centerY = obs.lane * LANE_HEIGHT + LANE_HEIGHT / 2;
+                if (obs.type === 'bear') {
+                    drawPolarBear(obs.x, centerY);
+                } else if (obs.type === 'iceberg') {
+                    drawIceberg(obs.x, centerY);
+                } else if (obs.type === 'opening') {
+                    drawOpening(obs.x, centerY, obs.width);
+                }
+            });
+
+            // Draw collectibles
+            collectibles.forEach(col => {
+                const centerY = col.lane * LANE_HEIGHT + LANE_HEIGHT / 2;
+                if (col.type === 'seal') {
+                    drawSeal(col.x, centerY);
+                } else if (col.type === 'fox') {
+                    drawFox(col.x, centerY);
+                }
+            });
+
+            // Draw player dogsled team
+            drawDogsled();
+
+            // Draw HUD
+            drawHUD();
+
+            // Draw overlays
+            if (!gameState.hasStarted) {
+                drawStartScreen();
+            } else if (gameState.isGameOver) {
+                drawGameOver();
+            }
+        }
+
+        // ===== GAME LOOP =====
+        function gameLoop(timestamp) {
+            const dt = Math.min((timestamp - lastTime) / 1000, 0.1);
+            lastTime = timestamp;
+
+            update(dt);
+            draw();
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        // ===== INITIALIZATION =====
+        resizeCanvas();
+        resetGame();
+        requestAnimationFrame(gameLoop);
+    </script>
+</body>
+</html>
