@@ -26,15 +26,15 @@ export function loadImages(sources, callback) {
 }
 
 export function drawScene(ctx, metrics, gameState, player, obstacles, collectibles, poolSize, config, lastTime, sprites) {
-    const { GAME_WIDTH, GAME_HEIGHT, LANE_HEIGHT } = metrics;
+    const { GAME_WIDTH, GAME_HEIGHT, LANE_HEIGHT, LANDSCAPE_HEIGHT, PLAYABLE_OFFSET } = metrics;
     const portrait = GAME_HEIGHT > GAME_WIDTH;
 
     ctx.clearRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
 
-    drawBackground(ctx, GAME_WIDTH, GAME_HEIGHT, LANE_HEIGHT, gameState.animTime, config.LANE_COUNT);
+    drawBackground(ctx, GAME_WIDTH, GAME_HEIGHT, LANE_HEIGHT, gameState.animTime, config.LANE_COUNT, LANDSCAPE_HEIGHT, PLAYABLE_OFFSET);
 
     obstacles.forEach(obs => {
-        const centerY = obs.lane * LANE_HEIGHT + LANE_HEIGHT / 2;
+        const centerY = PLAYABLE_OFFSET + obs.lane * LANE_HEIGHT + LANE_HEIGHT / 2;
         const s = obs.scale || 1;
         if (obs.type === 'bear') {
             drawPolarBear(ctx, obs.x, centerY, s, gameState.animTime, sprites);
@@ -46,7 +46,7 @@ export function drawScene(ctx, metrics, gameState, player, obstacles, collectibl
     });
 
     collectibles.forEach(col => {
-        const centerY = col.lane * LANE_HEIGHT + LANE_HEIGHT / 2;
+        const centerY = PLAYABLE_OFFSET + col.lane * LANE_HEIGHT + LANE_HEIGHT / 2;
         const s = col.scale || 1;
         if (col.type === 'seal') {
             drawSeal(ctx, col.x, centerY, s, gameState.animTime, sprites);
@@ -65,38 +65,184 @@ export function drawScene(ctx, metrics, gameState, player, obstacles, collectibl
     }
 }
 
-function drawBackground(ctx, gameWidth, gameHeight, laneHeight, animTime, laneCount) {
-    const gradient = ctx.createLinearGradient(0, 0, 0, gameHeight);
-    gradient.addColorStop(0, '#2c5f8d');
-    gradient.addColorStop(0.6, '#87ceeb');
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, gameWidth, gameHeight);
+function drawBackground(ctx, gameWidth, gameHeight, laneHeight, animTime, laneCount, landscapeHeight, playableOffset) {
+    // Draw arctic landscape row at the top
+    const skyGradient = ctx.createLinearGradient(0, 0, 0, landscapeHeight);
+    skyGradient.addColorStop(0, '#87a5c4');
+    skyGradient.addColorStop(0.6, '#b8d4e8');
+    skyGradient.addColorStop(1, '#d4e8f5');
+    ctx.fillStyle = skyGradient;
+    ctx.fillRect(0, 0, gameWidth, landscapeHeight);
 
-    ctx.fillStyle = '#e0f2f7';
-    ctx.fillRect(0, 0, gameWidth, gameHeight);
+    // Draw distant mountain silhouettes
+    drawMountains(ctx, gameWidth, landscapeHeight, animTime);
 
-    ctx.strokeStyle = '#c8e6f0';
-    ctx.lineWidth = 2;
-    const offset = (animTime * 100) % 100;
-    for (let x = -100 + offset; x < gameWidth; x += 100) {
-        ctx.beginPath();
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x + 50, gameHeight);
-        ctx.stroke();
+    // Draw playable snow/ice area - pure white
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, playableOffset, gameWidth, gameHeight - playableOffset);
+
+    // Add subtle static ice crack patterns for texture
+    drawIceCracks(ctx, gameWidth, gameHeight, playableOffset, animTime);
+
+    // Draw ice stumps and small chunks for detail
+    drawIceStumps(ctx, gameWidth, gameHeight, playableOffset, animTime);
+}
+
+function drawMountains(ctx, gameWidth, landscapeHeight, animTime) {
+    // Parallax scrolling for depth
+    const slowScroll = (animTime * 10) % gameWidth;
+    const mediumScroll = (animTime * 20) % gameWidth;
+    
+    // Back layer - distant mountains (darkest silhouettes)
+    ctx.fillStyle = 'rgba(60, 90, 120, 0.3)';
+    ctx.beginPath();
+    ctx.moveTo(-slowScroll, landscapeHeight);
+    ctx.lineTo(-slowScroll + gameWidth * 0.2, landscapeHeight * 0.4);
+    ctx.lineTo(-slowScroll + gameWidth * 0.35, landscapeHeight * 0.5);
+    ctx.lineTo(-slowScroll + gameWidth * 0.5, landscapeHeight * 0.3);
+    ctx.lineTo(-slowScroll + gameWidth * 0.7, landscapeHeight * 0.45);
+    ctx.lineTo(-slowScroll + gameWidth, landscapeHeight * 0.35);
+    ctx.lineTo(-slowScroll + gameWidth, landscapeHeight);
+    ctx.fill();
+    
+    // Repeat for seamless scrolling
+    ctx.beginPath();
+    ctx.moveTo(gameWidth - slowScroll, landscapeHeight);
+    ctx.lineTo(gameWidth - slowScroll + gameWidth * 0.2, landscapeHeight * 0.4);
+    ctx.lineTo(gameWidth - slowScroll + gameWidth * 0.35, landscapeHeight * 0.5);
+    ctx.lineTo(gameWidth - slowScroll + gameWidth * 0.5, landscapeHeight * 0.3);
+    ctx.lineTo(gameWidth - slowScroll + gameWidth * 0.7, landscapeHeight * 0.45);
+    ctx.lineTo(gameWidth - slowScroll + gameWidth, landscapeHeight * 0.35);
+    ctx.lineTo(gameWidth - slowScroll + gameWidth, landscapeHeight);
+    ctx.fill();
+    
+    // Middle layer - closer mountains
+    ctx.fillStyle = 'rgba(80, 110, 140, 0.5)';
+    ctx.beginPath();
+    ctx.moveTo(-mediumScroll, landscapeHeight);
+    ctx.lineTo(-mediumScroll + gameWidth * 0.15, landscapeHeight * 0.5);
+    ctx.lineTo(-mediumScroll + gameWidth * 0.3, landscapeHeight * 0.55);
+    ctx.lineTo(-mediumScroll + gameWidth * 0.45, landscapeHeight * 0.4);
+    ctx.lineTo(-mediumScroll + gameWidth * 0.6, landscapeHeight * 0.6);
+    ctx.lineTo(-mediumScroll + gameWidth * 0.8, landscapeHeight * 0.5);
+    ctx.lineTo(-mediumScroll + gameWidth, landscapeHeight * 0.65);
+    ctx.lineTo(-mediumScroll + gameWidth, landscapeHeight);
+    ctx.fill();
+    
+    // Repeat for seamless scrolling
+    ctx.beginPath();
+    ctx.moveTo(gameWidth - mediumScroll, landscapeHeight);
+    ctx.lineTo(gameWidth - mediumScroll + gameWidth * 0.15, landscapeHeight * 0.5);
+    ctx.lineTo(gameWidth - mediumScroll + gameWidth * 0.3, landscapeHeight * 0.55);
+    ctx.lineTo(gameWidth - mediumScroll + gameWidth * 0.45, landscapeHeight * 0.4);
+    ctx.lineTo(gameWidth - mediumScroll + gameWidth * 0.6, landscapeHeight * 0.6);
+    ctx.lineTo(gameWidth - mediumScroll + gameWidth * 0.8, landscapeHeight * 0.5);
+    ctx.lineTo(gameWidth - mediumScroll + gameWidth, landscapeHeight * 0.65);
+    ctx.lineTo(gameWidth - mediumScroll + gameWidth, landscapeHeight);
+    ctx.fill();
+    
+    // Front layer - nearest mountains
+    ctx.fillStyle = 'rgba(100, 130, 160, 0.7)';
+    ctx.beginPath();
+    ctx.moveTo(0, landscapeHeight);
+    ctx.lineTo(gameWidth * 0.1, landscapeHeight * 0.65);
+    ctx.lineTo(gameWidth * 0.25, landscapeHeight * 0.7);
+    ctx.lineTo(gameWidth * 0.4, landscapeHeight * 0.55);
+    ctx.lineTo(gameWidth * 0.55, landscapeHeight * 0.75);
+    ctx.lineTo(gameWidth * 0.75, landscapeHeight * 0.6);
+    ctx.lineTo(gameWidth * 0.9, landscapeHeight * 0.8);
+    ctx.lineTo(gameWidth, landscapeHeight * 0.7);
+    ctx.lineTo(gameWidth, landscapeHeight);
+    ctx.fill();
+}
+
+function drawIceCracks(ctx, gameWidth, gameHeight, playableOffset, animTime) {
+    // Ice crack patterns that scroll left as team moves forward
+    const scrollOffset = (animTime * 200) % (gameWidth * 1.5);
+    const playableHeight = gameHeight - playableOffset;
+    
+    // Subtle diagonal cracks - repeating pattern
+    ctx.strokeStyle = 'rgba(230, 235, 245, 0.6)';
+    ctx.lineWidth = 0.8;
+    
+    const cracks = [
+        { x1: 0.1, y1: 0.15, x2: 0.25, y2: 0.35 },
+        { x1: 0.4, y1: 0.25, x2: 0.5, y2: 0.45 },
+        { x1: 0.65, y1: 0.1, x2: 0.75, y2: 0.3 },
+        { x1: 0.2, y1: 0.55, x2: 0.35, y2: 0.75 },
+        { x1: 0.55, y1: 0.5, x2: 0.7, y2: 0.7 },
+        { x1: 0.8, y1: 0.6, x2: 0.95, y2: 0.8 }
+    ];
+    
+    // Draw two sets for seamless looping
+    for (let offset = 0; offset < 2; offset++) {
+        cracks.forEach(crack => {
+            const baseX1 = (crack.x1 + offset) * gameWidth * 1.5;
+            const baseX2 = (crack.x2 + offset) * gameWidth * 1.5;
+            const x1 = baseX1 - scrollOffset;
+            const x2 = baseX2 - scrollOffset;
+            
+            // Only draw if visible on screen
+            if (x2 > -50 && x1 < gameWidth + 50) {
+                ctx.beginPath();
+                ctx.moveTo(x1, playableOffset + crack.y1 * playableHeight);
+                ctx.lineTo(x2, playableOffset + crack.y2 * playableHeight);
+                ctx.stroke();
+            }
+        });
     }
+}
 
-    ctx.strokeStyle = 'rgba(150, 200, 220, 0.3)';
-    ctx.lineWidth = 1;
-    for (let i = 1; i < laneCount; i++) {
-        ctx.beginPath();
-        ctx.moveTo(0, i * laneHeight);
-        ctx.lineTo(gameWidth, i * laneHeight);
-        ctx.stroke();
+function drawIceStumps(ctx, gameWidth, gameHeight, playableOffset, animTime) {
+    // Ice stumps that scroll left as team moves forward
+    const scrollOffset = (animTime * 200) % (gameWidth * 1.5);
+    
+    const iceChunks = [
+        { x: 0.15, y: 0.2, size: 1.2 },
+        { x: 0.35, y: 0.6, size: 0.8 },
+        { x: 0.55, y: 0.3, size: 1.0 },
+        { x: 0.70, y: 0.7, size: 0.9 },
+        { x: 0.85, y: 0.4, size: 1.1 },
+        { x: 0.25, y: 0.85, size: 0.7 },
+        { x: 0.45, y: 0.15, size: 1.3 },
+        { x: 0.65, y: 0.55, size: 0.85 },
+        { x: 0.90, y: 0.25, size: 1.05 }
+    ];
+    
+    const playableHeight = gameHeight - playableOffset;
+    
+    // Draw two sets for seamless looping
+    for (let offset = 0; offset < 2; offset++) {
+        iceChunks.forEach(chunk => {
+            const baseX = (chunk.x + offset) * gameWidth * 1.5;
+            const x = baseX - scrollOffset;
+            const y = playableOffset + chunk.y * playableHeight;
+            const size = chunk.size;
+            
+            // Only draw if visible on screen
+            if (x > -50 && x < gameWidth + 50) {
+                // Draw ice stump outline - more subtle
+                ctx.strokeStyle = 'rgba(210, 220, 235, 0.7)';
+                ctx.lineWidth = 1.5;
+                
+                // Irregular ice chunk shape - outline only
+                ctx.beginPath();
+                ctx.moveTo(x, y - 8 * size);
+                ctx.lineTo(x + 12 * size, y - 6 * size);
+                ctx.lineTo(x + 15 * size, y + 2 * size);
+                ctx.lineTo(x + 10 * size, y + 8 * size);
+                ctx.lineTo(x - 5 * size, y + 7 * size);
+                ctx.lineTo(x - 10 * size, y + 2 * size);
+                ctx.lineTo(x - 8 * size, y - 5 * size);
+                ctx.closePath();
+                ctx.stroke();
+            }
+        });
     }
 }
 
 function drawDogsled(ctx, player, gameState, metrics, config, portrait, sprites) {
-    const centerY = player.lane * metrics.LANE_HEIGHT + metrics.LANE_HEIGHT / 2;
+    const centerY = metrics.PLAYABLE_OFFSET + player.lane * metrics.LANE_HEIGHT + metrics.LANE_HEIGHT / 2;
     const bobAmount = Math.sin(gameState.animTime * 8) * 3;
     const ropeBob = Math.sin(gameState.animTime * 6) * 2;
     const dogsledScale = portrait ? config.PORTRAIT_DOG_SCALE : 1;
@@ -256,7 +402,9 @@ function drawPolarBear(ctx, x, y, s = 1, animTime, sprites) {
         if (sprite && sprite.complete) {
             const spriteWidth = 90 * s; // Bigger bear to balance with dogsled team
             const spriteHeight = 78 * s; // Bigger bear to balance with dogsled team
-            ctx.drawImage(sprite, x - spriteWidth / 2, y - spriteHeight / 2, spriteWidth, spriteHeight);
+            // Bear walks slightly to the left
+            const walkOffset = (animTime * 15) % 30 - 15; // Small walking motion
+            ctx.drawImage(sprite, x - spriteWidth / 2 + walkOffset, y - spriteHeight / 2, spriteWidth, spriteHeight);
             return;
         }
     }
@@ -264,26 +412,27 @@ function drawPolarBear(ctx, x, y, s = 1, animTime, sprites) {
     // Fallback to placeholder
     const bob = Math.sin(animTime * 3 + x) * 4;
     const headNod = Math.sin(animTime * 4) * 2;
+    const walkOffset = (animTime * 15) % 30 - 15; // Small walking motion
 
     ctx.fillStyle = '#f0f0f0';
     ctx.beginPath();
-    ctx.ellipse(x, y + bob, 35 * s, 25 * s, 0, 0, Math.PI * 2);
+    ctx.ellipse(x + walkOffset, y + bob, 35 * s, 25 * s, 0, 0, Math.PI * 2);
     ctx.fill();
 
     ctx.beginPath();
-    ctx.ellipse(x + 30 * s, y - 5 + bob + headNod, 20 * s, 18 * s, 0, 0, Math.PI * 2);
+    ctx.ellipse(x + 30 * s + walkOffset, y - 5 + bob + headNod, 20 * s, 18 * s, 0, 0, Math.PI * 2);
     ctx.fill();
 
     ctx.beginPath();
-    ctx.arc(x + 22 * s, y - 20 + bob + headNod, 6 * s, 0, Math.PI * 2);
+    ctx.arc(x + 22 * s + walkOffset, y - 20 + bob + headNod, 6 * s, 0, Math.PI * 2);
     ctx.fill();
     ctx.beginPath();
-    ctx.arc(x + 38 * s, y - 20 + bob + headNod, 6 * s, 0, Math.PI * 2);
+    ctx.arc(x + 38 * s + walkOffset, y - 20 + bob + headNod, 6 * s, 0, Math.PI * 2);
     ctx.fill();
 
     ctx.fillStyle = '#222';
     ctx.beginPath();
-    ctx.arc(x + 42 * s, y - 3 + bob + headNod, 4 * s, 0, Math.PI * 2);
+    ctx.arc(x + 42 * s + walkOffset, y - 3 + bob + headNod, 4 * s, 0, Math.PI * 2);
     ctx.fill();
 }
 
@@ -383,26 +532,23 @@ function drawIceberg(ctx, x, y, s = 1, animTime, sprites, subtype = 0) {
         if (sprite && sprite.complete) {
             const spriteWidth = 80 * s; // Bigger icebergs
             const spriteHeight = 105 * s; // Bigger icebergs
-            const drift = Math.sin(animTime * 2 + x * 0.1) * 2;
-            ctx.drawImage(sprite, x - spriteWidth / 2 + drift, y - spriteHeight / 2, spriteWidth, spriteHeight);
+            ctx.drawImage(sprite, x - spriteWidth / 2, y - spriteHeight / 2, spriteWidth, spriteHeight);
             return;
         }
     }
     
     // Fallback to placeholder
-    const drift = Math.sin(animTime * 2 + x * 0.1) * 2;
-
     ctx.fillStyle = '#e6f9ff';
     ctx.strokeStyle = '#b3e5fc';
     ctx.lineWidth = 2 * s;
 
     ctx.beginPath();
-    ctx.moveTo(x + drift, y + 20 * s);
-    ctx.lineTo(x + 15 * s + drift, y - 30 * s);
-    ctx.lineTo(x + 25 * s + drift, y - 40 * s);
-    ctx.lineTo(x + 35 * s + drift, y - 35 * s);
-    ctx.lineTo(x + 45 * s + drift, y - 20 * s);
-    ctx.lineTo(x + 60 * s + drift, y + 20 * s);
+    ctx.moveTo(x, y + 20 * s);
+    ctx.lineTo(x + 15 * s, y - 30 * s);
+    ctx.lineTo(x + 25 * s, y - 40 * s);
+    ctx.lineTo(x + 35 * s, y - 35 * s);
+    ctx.lineTo(x + 45 * s, y - 20 * s);
+    ctx.lineTo(x + 60 * s, y + 20 * s);
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
@@ -422,8 +568,6 @@ function drawOpening(ctx, x, y, width, laneHeight, animTime, sprites, subtype = 
     }
     
     // Fallback to placeholder
-    const wave = Math.sin(animTime * 4 + x * 0.1) * 3;
-
     ctx.fillStyle = '#1e3a5f';
     ctx.fillRect(x, y - laneHeight / 2, width, laneHeight);
 
@@ -431,8 +575,8 @@ function drawOpening(ctx, x, y, width, laneHeight, animTime, sprites, subtype = 
     ctx.lineWidth = 2;
     for (let i = 0; i < 3; i++) {
         ctx.beginPath();
-        ctx.moveTo(x, y - 10 + i * 10 + wave);
-        ctx.lineTo(x + width, y - 10 + i * 10 + wave);
+        ctx.moveTo(x, y - 10 + i * 10);
+        ctx.lineTo(x + width, y - 10 + i * 10);
         ctx.stroke();
     }
 
@@ -477,18 +621,18 @@ function drawHUD(ctx, metrics, gameState, player, obstacles, collectibles, poolS
 
         ctx.strokeStyle = '#0f0';
         ctx.lineWidth = 2;
-        const playerY = player.lane * metrics.LANE_HEIGHT + metrics.LANE_HEIGHT / 2;
+        const playerY = metrics.PLAYABLE_OFFSET + player.lane * metrics.LANE_HEIGHT + metrics.LANE_HEIGHT / 2;
         ctx.strokeRect(player.x, playerY - player.height / 2, player.width, player.height);
 
         ctx.strokeStyle = '#f00';
         obstacles.forEach(obs => {
-            const centerY = obs.lane * metrics.LANE_HEIGHT + metrics.LANE_HEIGHT / 2;
+            const centerY = metrics.PLAYABLE_OFFSET + obs.lane * metrics.LANE_HEIGHT + metrics.LANE_HEIGHT / 2;
             ctx.strokeRect(obs.x, centerY - obs.height / 2, obs.width, obs.height);
         });
 
         ctx.strokeStyle = '#0ff';
         collectibles.forEach(col => {
-            const centerY = col.lane * metrics.LANE_HEIGHT + metrics.LANE_HEIGHT / 2;
+            const centerY = metrics.PLAYABLE_OFFSET + col.lane * metrics.LANE_HEIGHT + metrics.LANE_HEIGHT / 2;
             ctx.strokeRect(col.x, centerY - col.height / 2, col.width, col.height);
         });
     }
